@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import scraper
+from . import admin
 
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -58,8 +59,10 @@ async def health() -> dict:
 
 @app.post("/api/scrape")
 async def scrape(req: ScrapeRequest) -> dict:
+    import time as _time
+    t0 = _time.time()
     try:
-        return await scraper.scrape(
+        result = await scraper.scrape(
             search_term=req.search_term,
             location=req.location,
             sites=req.sites,
@@ -69,6 +72,25 @@ async def scrape(req: ScrapeRequest) -> dict:
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # log + send to telegram (best-effort, does not block the response)
+    try:
+        elapsed = round(_time.time() - t0, 2)
+        await admin.log_search(admin.LogSearch(
+            search_term=req.search_term,
+            location=req.location or "",
+            sites=result.get("sites") or [],
+            hours_old=result.get("hours_old") or 168,
+            results_wanted=result.get("results_wanted") or 50,
+            job_count=result.get("count", 0),
+            ok=result.get("ok", False),
+            duration_seconds=elapsed,
+            jobs=[admin.LogJob(**j) for j in result.get("jobs", [])],
+        ))
+    except Exception:
+        log.exception("admin log_search failed (non-fatal)")
+
+    return result
 
 
 # serve the dashboard from app/static/
