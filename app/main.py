@@ -36,6 +36,9 @@ app = FastAPI(
     version=VERSION,
 )
 
+# register admin router (sqlite log + xlsx + telegram)
+app.include_router(admin.router)
+
 
 class ScrapeRequest(BaseModel):
     search_term: str = Field(..., min_length=1, max_length=200, description="job title / keywords")
