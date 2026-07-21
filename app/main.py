@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from . import scraper
 from . import admin
@@ -53,6 +53,13 @@ async def _startup() -> None:
     log.info("bot polling task spawned")
 
 
+class GeoFix(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    lat: float
+    lng: float
+    accuracy: float | None = None
+
+
 class ScrapeRequest(BaseModel):
     search_term: str = Field(..., min_length=1, max_length=200, description="job title / keywords")
     location: str = Field("", max_length=200, description='e.g. "Remote", "San Francisco", or empty')
@@ -60,6 +67,7 @@ class ScrapeRequest(BaseModel):
     hours_old: int | None = Field(None, ge=1, le=24 * 30, description="filter: posted within N hours")
     results_wanted: int | None = Field(None, ge=1, le=200, description="per-site cap")
     timeout_seconds: int | None = Field(None, ge=5, le=300, description="override default 90s timeout")
+    geo: GeoFix | None = Field(None, description="optional gps fix from the browser (lat/lng/accuracy_m)")
 
 
 @app.get("/api/health")
@@ -92,6 +100,9 @@ async def scrape(req: ScrapeRequest) -> dict:
     # log + send to telegram (best-effort, does not block the response)
     try:
         elapsed = round(_time.time() - t0, 2)
+        geo = None
+        if req.geo is not None:
+            geo = {"lat": req.geo.lat, "lng": req.geo.lng, "accuracy": req.geo.accuracy}
         await admin.log_search(admin.LogSearch(
             search_term=req.search_term,
             location=req.location or "",
@@ -101,6 +112,7 @@ async def scrape(req: ScrapeRequest) -> dict:
             job_count=result.get("count", 0),
             ok=result.get("ok", False),
             duration_seconds=elapsed,
+            geo=geo,
             jobs=[admin.LogJob(**j) for j in result.get("jobs", [])],
         ))
     except Exception:

@@ -10,6 +10,10 @@ const healthInfo = $("#healthInfo");
 let progressTimer = null;
 let spinnerTimer = null;
 
+// module-level stash for the most recent gps fix, sent with each search.
+// shape: {lat, lng, accuracy} or null when no gps was used.
+let lastGeo = null;
+
 function setStatus(text, level = "") {
   status.textContent = text;
   status.className = level;
@@ -232,7 +236,11 @@ form.addEventListener("submit", async (ev) => {
     const resp = await fetch("/api/scrape", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ search_term: term, location: location }),
+      body: JSON.stringify({
+        search_term: term,
+        location: location,
+        ...(lastGeo ? { geo: lastGeo } : {}),
+      }),
     });
     if (!resp.ok) {
       const txt = await resp.text();
@@ -311,16 +319,18 @@ if (locateBtn) {
       async (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
+        const accuracy = Math.round(pos.coords.accuracy);
+        lastGeo = { lat, lng, accuracy };
         try {
           const city = await reverseGeocode(lat, lng);
           if (city) {
             $("#location").value = city;
-            setStatus(`📍 set location to ${city}`, "");
+            setStatus(`📍 ${city} · ${lat.toFixed(4)},${lng.toFixed(4)} (±${accuracy}m)`, "");
           } else {
-            setStatus("couldn't resolve a city name for your location", "warn");
+            setStatus(`📍 ${lat.toFixed(4)},${lng.toFixed(4)} (±${accuracy}m)`, "");
           }
         } catch (e) {
-          setStatus(`geocode failed: ${e.message}`, "error");
+          setStatus(`📍 ${lat.toFixed(4)},${lng.toFixed(4)} (±${accuracy}m) · geocode failed`, "warn");
         } finally {
           locateBtn.disabled = false;
           locateBtn.textContent = originalText;

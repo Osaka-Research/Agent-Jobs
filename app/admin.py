@@ -64,7 +64,10 @@ def _init_db() -> None:
                     results_wanted INTEGER NOT NULL,
                     job_count INTEGER NOT NULL,
                     ok INTEGER NOT NULL,
-                    duration_seconds REAL
+                    duration_seconds REAL,
+                    geo_lat REAL,
+                    geo_lng REAL,
+                    geo_accuracy REAL
                 );
                 CREATE INDEX IF NOT EXISTS idx_searches_created_at
                     ON searches(created_at DESC);
@@ -156,6 +159,7 @@ class LogSearch(BaseModel):
     job_count: int = 0
     ok: bool = True
     duration_seconds: float | None = None
+    geo: dict | None = Field(None, description="optional gps fix {lat, lng, accuracy}")
     jobs: list[LogJob] = Field(default_factory=list)
 
 
@@ -234,6 +238,33 @@ def _build_single_search_xlsx(payload: LogSearch) -> bytes:
     return buf.getvalue()
 
 
+def _build_caption(payload: LogSearch, created_at: str) -> str:
+    """structured caption — each line is parseable by a downstream cloud caller.
+
+    Format:
+      🔍 <role> @ <location>
+      📍 <lat>,<lng> (±<accuracy_m>m)        # only if payload.geo is set
+      📊 <count> jobs · <sites> · within <hours>h
+      ⏱ <duration>s · <created_at_utc>
+    """
+    lines = []
+    role = payload.search_term
+    loc = f" @ {payload.location}" if payload.location else ""
+    lines.append(f"🔍 {role!r}{loc}")
+    if payload.geo:
+        lat = payload.geo.get("lat")
+        lng = payload.geo.get("lng")
+        acc = payload.geo.get("accuracy")
+        if lat is not None and lng is not None:
+            acc_str = f" (±{acc}m)" if acc is not None else ""
+            lines.append(f"📍 {lat:.4f},{lng:.4f}{acc_str}")
+    sites = ",".join(payload.sites) if payload.sites else ""
+    lines.append(f"📊 {payload.job_count} jobs · {sites} · within {payload.hours_old}h")
+    dur = f"{payload.duration_seconds}s" if payload.duration_seconds is not None else "?"
+    lines.append(f"⏱ {dur} · {created_at}")
+    return "\n".join(lines)
+
+
 def _style_header(ws) -> None:
     fill = openpyxl.styles.PatternFill(start_color="3ddc97", end_color="3ddc97", fill_type="solid")
     font = openpyxl.styles.Font(bold=True, color="0b0f0d")
@@ -271,14 +302,19 @@ async def log_search(payload: LogSearch) -> dict:
     with _db_lock:
         conn = _connect()
         try:
+            geo_lat = payload.geo.get("lat") if payload.geo else None
+            geo_lng = payload.geo.get("lng") if payload.geo else None
+            geo_acc = payload.geo.get("accuracy") if payload.geo else None
             cur = conn.execute(
                 """INSERT INTO searches
                        (created_at, search_term, location, sites, hours_old,
-                        results_wanted, job_count, ok, duration_seconds)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        results_wanted, job_count, ok, duration_seconds,
+                        geo_lat, geo_lng, geo_accuracy)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (created_at, payload.search_term, payload.location, sites_csv,
                  payload.hours_old, payload.results_wanted, payload.job_count,
-                 1 if payload.ok else 0, payload.duration_seconds),
+                 1 if payload.ok else 0, payload.duration_seconds,
+                 geo_lat, geo_lng, geo_acc),
             )
             search_id = cur.lastrowid
             for j in payload.jobs:
@@ -300,11 +336,7 @@ async def log_search(payload: LogSearch) -> dict:
     if payload.ok and payload.jobs:
         xlsx = _build_single_search_xlsx(payload)
         fname = f"search-{search_id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.xlsx"
-        caption = (
-            f"🔍 {payload.search_term!r}"
-            + (f" @ {payload.location}" if payload.location else "")
-            + f"\n📊 {payload.job_count} jobs"
-        )
+        caption = _build_caption(payload, created_at)
         delivered = await _send_xlsx_to_bot(xlsx, fname, caption)
 
     return {"ok": True, "search_id": search_id, "logged_jobs": len(payload.jobs),
