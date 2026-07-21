@@ -15,7 +15,9 @@ RUN pip install -r requirements.txt
 # copy app
 COPY app/ ./app/
 
-EXPOSE 8000
+EXPOSE 10000
 
-# single worker — jobspy is serial per-call; concurrency happens at the request layer
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--log-level", "info"]
+# Render sets $PORT (default 10000) and publishes that port to the public URL.
+# Hardcoding 8000 here broke the first deploy — health check on /api/health
+# hit the wrong port. Use $PORT so it tracks whatever Render assigns.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000} --workers 1 --log-level info"]
