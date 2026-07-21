@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Agent Jobs</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<header>
+  <h1>Agent Jobs</h1>
+  <p class="sub">scrape linkedin, indeed, glassdoor in one call.</p>
+</header>
+
+<form id="searchForm">
+  <div class="row">
+    <label>
+      <span>search</span>
+      <input id="searchTerm" type="text" placeholder="e.g. python backend" required autocomplete="off" />
+    </label>
+    <label>
+      <span>location</span>
+      <input id="location" type="text" placeholder="e.g. Remote, or San Francisco" autocomplete="off" />
+    </label>
+  </div>
+  <div class="row">
+    <fieldset id="sitesField">
+      <legend>sites</legend>
+      <label><input type="checkbox" value="linkedin" checked /> linkedin</label>
+      <label><input type="checkbox" value="indeed" checked /> indeed</label>
+      <label><input type="checkbox" value="glassdoor" checked /> glassdoor</label>
+    </fieldset>
+    <label>
+      <span>posted within (hours)</span>
+      <input id="hoursOld" type="number" min="1" max="720" value="168" />
+    </label>
+    <label>
+      <span>per-site cap</span>
+      <input id="limit" type="number" min="1" max="200" value="50" />
+    </label>
+  </div>
+  <button type="submit">scrape</button>
+</form>
+
+<section id="status" aria-live="polite"></section>
+<section id="results" aria-live="polite"></section>
+
+<footer>
+  <span id="healthInfo"></span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

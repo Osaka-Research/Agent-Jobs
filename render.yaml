@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: agent-jobs
+    runtime: docker
+    plan: starter
+    region: oregon
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: SCRAPE_TIMEOUT_SECONDS
+        value: "90"
+      - key: SCRAPE_MAX_PER_SITE
+        value: "50"
+      - key: SCRAPE_DEFAULT_HOURS_OLD
+        value: "168"
+      - key: SCRAPE_DEFAULT_SITES
+        value: "linkedin,indeed,glassdoor"

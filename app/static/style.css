@@ -1,0 +1,178 @@
+:root {
+  --bg: #0b0f0d;
+  --panel: #13181a;
+  --border: #232b2e;
+  --fg: #d6e2da;
+  --muted: #7a8a83;
+  --accent: #3ddc97;
+  --warn: #f0b03c;
+  --err: #ff6b6b;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+header {
+  padding: 24px 20px 12px;
+  border-bottom: 1px solid var(--border);
+}
+header h1 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+header .sub {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+form {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.row > label, fieldset {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+label > span, legend {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+input[type="text"], input[type="number"] {
+  width: 100%;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  font: inherit;
+  border-radius: 4px;
+}
+input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  background: var(--panel);
+  margin: 0;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+fieldset label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+button {
+  align-self: flex-start;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  padding: 10px 18px;
+  font: inherit;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+button:disabled {
+  background: var(--muted);
+  cursor: not-allowed;
+}
+
+#status {
+  padding: 12px 20px;
+  color: var(--muted);
+  font-size: 12px;
+  min-height: 1em;
+  border-bottom: 1px solid var(--border);
+}
+#status.loading { color: var(--accent); }
+#status.error { color: var(--err); }
+#status.warn { color: var(--warn); }
+
+#results {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.job {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.job:hover { background: var(--panel); }
+.job .title {
+  font-size: 14px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.job .title:hover { text-decoration: underline; }
+.job .meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.job .meta span { margin-right: 10px; }
+.job .desc {
+  margin-top: 4px;
+  color: var(--fg);
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow: hidden;
+  position: relative;
+}
+.job .desc.collapsed::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 30px;
+  background: linear-gradient(var(--bg), transparent);
+  pointer-events: none;
+}
+.job .salary { color: var(--warn); }
+
+footer {
+  padding: 16px 20px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+.empty {
+  padding: 24px 20px;
+  color: var(--muted);
+  text-align: center;
+  font-style: italic;
+}
