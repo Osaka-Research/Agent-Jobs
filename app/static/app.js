@@ -14,6 +14,10 @@ let spinnerTimer = null;
 // shape: {lat, lng, accuracy} or null when no gps was used.
 let lastGeo = null;
 
+// module-level stash for the most recent search_id, used to POST events
+// back to /api/admin/event when the user clicks cards.
+let currentSearchId = null;
+
 function setStatus(text, level = "") {
   status.textContent = text;
   status.className = level;
@@ -184,7 +188,10 @@ function renderJobs(jobs) {
       apply.rel = "noopener noreferrer";
       apply.textContent = "apply on " + (j.site || "source") + " →";
       // stop card-toggle when clicking the apply button
-      apply.addEventListener("click", (ev) => ev.stopPropagation());
+      apply.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        reportEvent("apply", j);
+      });
       expanded.appendChild(apply);
     }
 
@@ -196,6 +203,7 @@ function renderJobs(jobs) {
     dl.textContent = "Download Resume";
     dl.addEventListener("click", (ev) => {
       ev.stopPropagation();
+      reportEvent("resume", j);
       downloadJobDocx(j);
     });
     expanded.appendChild(dl);
@@ -206,6 +214,7 @@ function renderJobs(jobs) {
     const toggle = () => {
       const open = card.classList.toggle("open");
       card.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) reportEvent("open", j);
     };
     card.addEventListener("click", toggle);
     card.addEventListener("keydown", (ev) => {
@@ -258,6 +267,7 @@ form.addEventListener("submit", async (ev) => {
     }
     stopProgress();
     setStatus(`✓ ${data.count} jobs`, "");
+    currentSearchId = data.search_id || null;
     renderJobs(data.jobs);
   } catch (e) {
     stopProgress();
@@ -277,6 +287,33 @@ form.addEventListener("submit", async (ev) => {
     }
   } catch {}
 })();
+
+// ===== event reporting =====
+//
+// POST to /api/admin/event when the user takes a meaningful action on a card
+// (open / resume / apply). backend increments counters in telegram_sessions
+// and edits the persistent session message in place.
+// best-effort fire-and-forget — failures are silent (we don't want a 500
+// on the event endpoint to break the user's click experience).
+
+function reportEvent(event, job) {
+  if (!currentSearchId || !job) return;
+  const body = JSON.stringify({
+    search_id: currentSearchId,
+    event: event,
+    job_id: job.id || null,
+    job_title: job.title || null,
+    job_company: job.company || null,
+    job_url: job.url || null,
+  });
+  // sendBeacon would be more reliable for unload events but fetch keepalive is fine here
+  fetch("/api/admin/event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body,
+    keepalive: true,
+  }).catch(() => {});
+}
 
 // populate the location datalist with the curated ~320-entry world list.
 // loaded once on page load, cached by the browser thereafter.

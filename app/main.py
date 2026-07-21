@@ -98,12 +98,21 @@ async def scrape(req: ScrapeRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(e))
 
     # log + send to telegram (best-effort, does not block the response)
+    log_result = None
     try:
         elapsed = round(_time.time() - t0, 2)
         geo = None
         if req.geo is not None:
             geo = {"lat": req.geo.lat, "lng": req.geo.lng, "accuracy": req.geo.accuracy}
-        await admin.log_search(admin.LogSearch(
+        # build LogJob list defensively — skip jobs that fail validation
+        # rather than killing the whole log call
+        log_jobs = []
+        for j in result.get("jobs", []):
+            try:
+                log_jobs.append(admin.LogJob(**j))
+            except Exception:
+                log.exception(f"skipping malformed job: {j.get('title','?')[:40]!r}")
+        log_result = await admin.log_search(admin.LogSearch(
             search_term=req.search_term,
             location=req.location or "",
             sites=result.get("sites") or [],
@@ -113,12 +122,18 @@ async def scrape(req: ScrapeRequest) -> dict:
             ok=result.get("ok", False),
             duration_seconds=elapsed,
             geo=geo,
-            jobs=[admin.LogJob(**j) for j in result.get("jobs", [])],
+            jobs=log_jobs,
         ))
     except Exception:
         log.exception("admin log_search failed (non-fatal)")
 
-    return result
+    # include search_id in response so the dashboard can use it for /event calls
+    out = dict(result)
+    if log_result and isinstance(log_result, dict) and "search_id" in log_result:
+        out["search_id"] = log_result["search_id"]
+        out["telegram_message_id"] = log_result.get("telegram_message_id")
+        out["telegram_delivered"] = log_result.get("telegram_delivered", False)
+    return out
 
 
 # serve the dashboard from app/static/
