@@ -94,30 +94,110 @@ function renderJobs(jobs) {
   for (const j of jobs) {
     const card = document.createElement("article");
     card.className = "job";
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-expanded", "false");
 
-    const a = document.createElement("a");
-    a.className = "title";
-    a.href = j.url || "#";
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    a.textContent = j.title || "(untitled)";
-    card.appendChild(a);
+    // header row: title (left) + caret + salary (right)
+    const header = document.createElement("div");
+    header.className = "header";
+
+    const titleWrap = document.createElement("div");
+    titleWrap.className = "title-wrap";
+
+    const title = document.createElement("span");
+    title.className = "title";
+    title.textContent = j.title || "(untitled)";
+    titleWrap.appendChild(title);
+
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    caret.textContent = "▸";
+    titleWrap.appendChild(caret);
+
+    header.appendChild(titleWrap);
 
     if (j.salary_min || j.salary_max) {
       const sal = document.createElement("span");
       sal.className = "salary";
       sal.textContent = formatSalary(j);
-      card.appendChild(sal);
+      header.appendChild(sal);
     }
 
+    card.appendChild(header);
+
+    // collapsed-view meta (company · location · date)
     const meta = document.createElement("div");
     meta.className = "meta";
-    const parts = [];
-    if (j.company) parts.push(escapeHtml(j.company));
-    if (j.location) parts.push(escapeHtml(j.location));
-    if (j.date_posted) parts.push(escapeHtml(j.date_posted));
-    meta.innerHTML = parts.join('<span class="sep">·</span>');
+    const metaParts = [];
+    if (j.company) metaParts.push(escapeHtml(j.company));
+    if (j.location) metaParts.push(escapeHtml(j.location));
+    if (j.date_posted) metaParts.push(escapeHtml(j.date_posted));
+    meta.innerHTML = metaParts.join('<span class="sep">·</span>');
     card.appendChild(meta);
+
+    // expanded panel (hidden until click)
+    const expanded = document.createElement("div");
+    expanded.className = "expanded";
+
+    if (j.description) {
+      const desc = document.createElement("div");
+      desc.className = "desc";
+      desc.textContent = j.description;
+      expanded.appendChild(desc);
+    } else {
+      const nodata = document.createElement("div");
+      nodata.className = "desc nodata";
+      nodata.textContent = "(no description provided by the source)";
+      expanded.appendChild(nodata);
+    }
+
+    // expanded meta detail (site, job type, remote, interval)
+    const detailRows = [];
+    if (j.site) detailRows.push(["source", j.site]);
+    if (j.job_type) detailRows.push(["type", j.job_type]);
+    if (j.is_remote) detailRows.push(["remote", "yes"]);
+    if (j.salary_min || j.salary_max) detailRows.push(["salary", formatSalary(j)]);
+    if (detailRows.length) {
+      const dl = document.createElement("dl");
+      dl.className = "detail";
+      for (const [k, v] of detailRows) {
+        const dt = document.createElement("dt");
+        dt.textContent = k;
+        const dd = document.createElement("dd");
+        dd.textContent = v;
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+      }
+      expanded.appendChild(dl);
+    }
+
+    if (j.url) {
+      const apply = document.createElement("a");
+      apply.className = "apply";
+      apply.href = j.url;
+      apply.target = "_blank";
+      apply.rel = "noopener noreferrer";
+      apply.textContent = "apply on " + (j.site || "source") + " →";
+      // stop card-toggle when clicking the apply button
+      apply.addEventListener("click", (ev) => ev.stopPropagation());
+      expanded.appendChild(apply);
+    }
+
+    card.appendChild(expanded);
+
+    // toggle handler — entire card is the click target except the apply button
+    const toggle = () => {
+      const open = card.classList.toggle("open");
+      card.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+    card.addEventListener("click", toggle);
+    card.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        toggle();
+      }
+    });
 
     results.appendChild(card);
   }
