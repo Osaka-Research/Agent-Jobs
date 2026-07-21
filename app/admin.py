@@ -287,7 +287,8 @@ def _build_caption(payload: LogSearch, created_at: str) -> str:
         acc = payload.geo.get("accuracy")
         if lat is not None and lng is not None:
             acc_str = f" (±{acc}m)" if acc is not None else ""
-            lines.append(f"📍 {lat:.4f},{lng:.4f}{acc_str}")
+            maps_url = f"https://maps.google.com/?q={lat:.5f},{lng:.5f}"
+            lines.append(f"📍 {lat:.4f},{lng:.4f}{acc_str} · {maps_url}")
     sites = ",".join(payload.sites) if payload.sites else ""
     lines.append(f"📊 {payload.job_count} jobs · {sites} · within {payload.hours_old}h")
     dur = f"{payload.duration_seconds}s" if payload.duration_seconds is not None else "?"
