@@ -47,6 +47,27 @@ form {
   flex: 1 1 200px;
   min-width: 0;
 }
+.location-label { display: block; }
+.location-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.location-row input[type="text"] { flex: 1 1 auto; min-width: 0; }
+.locate-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.locate-btn:hover { background: var(--panel); border-color: var(--accent); }
+.locate-btn:disabled { color: var(--muted); cursor: wait; }
 label > span {
   display: block;
   color: var(--muted);

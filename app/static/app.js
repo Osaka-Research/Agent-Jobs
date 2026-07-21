@@ -289,6 +289,71 @@ form.addEventListener("submit", async (ev) => {
   } catch {}
 })();
 
+// ===== geolocation: "📍 locate me" button =====
+//
+// click → navigator.geolocation.getCurrentPosition → reverse-geocode
+// lat/lng to a "City, Country" string via bigdatacloud's free client API.
+// fills the #location input. no api key needed, 10k/day free tier.
+
+const locateBtn = document.getElementById("locateBtn");
+if (locateBtn) {
+  locateBtn.addEventListener("click", () => {
+    if (!navigator.geolocation) {
+      setStatus("geolocation not supported on this browser", "error");
+      return;
+    }
+    locateBtn.disabled = true;
+    const originalText = locateBtn.textContent;
+    locateBtn.textContent = "📍 locating…";
+    setStatus("requesting your location…", "loading");
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        try {
+          const city = await reverseGeocode(lat, lng);
+          if (city) {
+            $("#location").value = city;
+            setStatus(`📍 set location to ${city}`, "");
+          } else {
+            setStatus("couldn't resolve a city name for your location", "warn");
+          }
+        } catch (e) {
+          setStatus(`geocode failed: ${e.message}`, "error");
+        } finally {
+          locateBtn.disabled = false;
+          locateBtn.textContent = originalText;
+        }
+      },
+      (err) => {
+        locateBtn.disabled = false;
+        locateBtn.textContent = originalText;
+        const msg = err.code === err.PERMISSION_DENIED
+          ? "location permission denied"
+          : `geolocation error: ${err.message}`;
+        setStatus(msg, "error");
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+    );
+  });
+}
+
+async function reverseGeocode(lat, lng) {
+  // bigdatacloud free reverse-geocode-client — no api key required.
+  // returns locality + countryName in a single object.
+  const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+  // prefer city-level locality; fall back to principalSubdivision
+  const city = data.city || data.locality || data.localityInfo?.administrative?.[0]?.name || data.principalSubdivision;
+  const country = data.countryName || "";
+  if (city && country) return `${city}, ${country}`;
+  if (city) return city;
+  return null;
+}
+
 // ===== .docx download =====
 //
 // Builds a minimal valid .docx (Office Open XML) entirely in the browser.

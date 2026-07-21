@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Agent Jobs</title>
-<link rel="stylesheet" href="/static/style.css?v=5" />
+<link rel="stylesheet" href="/static/style.css?v=6" />
 </head>
 <body>
 <header>
@@ -17,9 +17,12 @@
       <span>role / keywords</span>
       <input id="searchTerm" type="text" placeholder="e.g. python backend" required autocomplete="off" />
     </label>
-    <label>
+    <label class="location-label">
       <span>location</span>
-      <input id="location" type="text" placeholder="e.g. Remote, San Francisco" list="locations" autocomplete="off" />
+      <div class="location-row">
+        <input id="location" type="text" placeholder="e.g. Remote, San Francisco" list="locations" autocomplete="off" />
+        <button type="button" id="locateBtn" class="locate-btn" title="use my current location">📍 locate me</button>
+      </div>
       <datalist id="locations"></datalist>
     </label>
     <button type="submit">search</button>
@@ -36,6 +39,6 @@
   <span id="healthInfo"></span>
 </footer>
 
-<script src="/static/app.js?v=6"></script>
+<script src="/static/app.js?v=7"></script>
 </body>
 </html>
