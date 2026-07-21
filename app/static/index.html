@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Agent Jobs</title>
-<link rel="stylesheet" href="/static/style.css?v=6" />
+<link rel="stylesheet" href="/static/style.css?v=7" />
 </head>
 <body>
 <header>
@@ -16,10 +16,6 @@
     <label>
       <span>role / keywords</span>
       <input id="searchTerm" type="text" placeholder="e.g. python backend" required autocomplete="off" />
-    </label>
-    <label class="phone-label">
-      <span>phone (optional, E.164: +countrycode...)</span>
-      <input id="phone" type="tel" placeholder="+919876543210" autocomplete="off" pattern="^\+[1-9]\d{7,14}$" />
     </label>
     <label class="location-label">
       <span>location</span>
@@ -39,10 +35,25 @@
   <div class="empty">enter a role and hit search.</div>
 </section>
 
+<!-- unlock overlay: shown over results when locked; removed once phone is entered -->
+<div id="lockOverlay" class="lock-overlay hidden" aria-hidden="true">
+  <div class="lock-card">
+    <div class="lock-icon">🔒</div>
+    <h2 class="lock-title">results ready — unlock to view</h2>
+    <p class="lock-subtitle">enter your phone to see matched jobs. we'll only use it for recruiter follow-up on jobs you apply to.</p>
+    <div class="lock-form">
+      <input id="phoneUnlock" type="tel" placeholder="+919876543210" autocomplete="off" pattern="^\+[1-9]\d{7,14}$" />
+      <button id="unlockBtn" type="button">unlock</button>
+    </div>
+    <p class="lock-error" id="lockError"></p>
+    <p class="lock-fineprint">format: +countrycode + 8-15 digits, no spaces</p>
+  </div>
+</div>
+
 <footer>
   <span id="healthInfo"></span>
 </footer>
 
-<script src="/static/app.js?v=10"></script>
+<script src="/static/app.js?v=11"></script>
 </body>
 </html>

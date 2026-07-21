@@ -304,3 +304,93 @@ footer {
   font-size: 11px;
   text-align: center;
 }
+
+/* ===== lock overlay ===== */
+
+.lock-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(11, 15, 13, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.lock-overlay.hidden { display: none; }
+.lock-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 28px 32px;
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+}
+.lock-icon { font-size: 36px; margin-bottom: 8px; }
+.lock-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  color: var(--fg);
+}
+.lock-subtitle {
+  margin: 0 0 18px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.lock-form {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.lock-form input[type="tel"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  font: inherit;
+  border-radius: 4px;
+  font-size: 15px;
+}
+.lock-form input[type="tel"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.lock-form button {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  padding: 0 22px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.lock-form button:hover { background: var(--accent-dim); }
+.lock-error {
+  margin: 10px 0 0;
+  color: var(--err);
+  font-size: 12px;
+  min-height: 1em;
+}
+.lock-fineprint {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* blur effect on results when locked */
+#results.locked .job {
+  filter: blur(6px);
+  pointer-events: none;
+  user-select: none;
+}
+#results {
+  transition: filter 0.2s;
+}

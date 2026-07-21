@@ -6,6 +6,7 @@ const form = $("#searchForm");
 const status = $("#status");
 const results = $("#results");
 const healthInfo = $("#healthInfo");
+const lockOverlay = $("#lockOverlay");
 
 let progressTimer = null;
 let spinnerTimer = null;
@@ -16,12 +17,45 @@ let lastGeo = null;
 
 // E.164 phone: + followed by 8-15 digits, first digit 1-9 (no leading zeros)
 const E164_RE = /^\+[1-9]\d{7,14}$/;
-function readPhone() {
-  const raw = ($("#phone")?.value || "").trim();
-  if (!raw) return null;
-  if (!E164_RE.test(raw)) return { error: "phone must be E.164 (e.g. +919876543210)" };
-  return { value: raw };
+function isValidPhone(raw) {
+  return E164_RE.test(String(raw || "").trim());
 }
+
+// current phone value (set when user unlocks). used to send with searches
+// and events after unlock.
+let currentPhone = null;
+
+// localStorage cache: { "{term}@{location}": { jobs: [...], ts: timestamp } }
+// reused as a preview when the same role+location is searched again —
+// user sees real jobs instantly (blurred), backend runs in parallel.
+const CACHE_KEY = "agent-jobs:cache:v1";
+function cacheKey(term, location) {
+  return `${term}@${location || ""}`;
+}
+function readCache() {
+  try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "{}"); }
+  catch { return {}; }
+}
+function writeCacheEntry(term, location, jobs) {
+  try {
+    const m = readCache();
+    m[cacheKey(term, location)] = { jobs: jobs.slice(0, 20), ts: Date.now() };
+    // cap to last 50 entries to avoid unbounded growth
+    const keys = Object.keys(m);
+    if (keys.length > 50) {
+      keys.sort((a, b) => m[a].ts - m[b].ts);
+      while (keys.length > 50) delete m[keys.shift()];
+    }
+    localStorage.setItem(CACHE_KEY, JSON.stringify(m));
+  } catch {}
+}
+function getCachedJobs(term, location) {
+  const m = readCache();
+  return m[cacheKey(term, location)]?.jobs || null;
+}
+
+// module-level stash for the most recent gps fix, sent with each search.
+// shape: {lat, lng, accuracy} or null when no gps was used.
 
 // module-level stash for the most recent search_id, used to POST events
 // back to /api/admin/event when the user clicks cards.
@@ -237,6 +271,76 @@ function renderJobs(jobs) {
   }
 }
 
+// ============================================================================
+// search flow: form submit → preview (cached or empty) → unlock → real results
+// ============================================================================
+
+function renderLockedPlaceholder(count) {
+  // show N grey skeleton cards so the user sees "something is here" before
+  // unlocking. count defaults to the cached preview length or 6.
+  const n = count || 6;
+  results.innerHTML = "";
+  for (let i = 0; i < n; i++) {
+    const skel = document.createElement("article");
+    skel.className = "job";
+    skel.style.opacity = "0.5";
+    skel.innerHTML = `
+      <div class="header">
+        <div class="title-wrap">
+          <span class="title">▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓</span>
+          <span class="caret">▸</span>
+        </div>
+      </div>
+      <div class="meta">
+        <span>▓▓▓▓▓▓▓▓▓▓</span>
+      </div>
+    `;
+    results.appendChild(skel);
+  }
+  results.classList.add("locked");
+}
+
+function lockResults() {
+  results.classList.add("locked");
+  lockOverlay.classList.remove("hidden");
+}
+
+function unlockResults() {
+  results.classList.remove("locked");
+  lockOverlay.classList.add("hidden");
+  // refocus search so user can keep iterating
+  $("#searchTerm").focus();
+}
+
+function showLockError(msg) {
+  const e = $("#lockError");
+  if (e) e.textContent = msg || "";
+}
+
+function tryUnlock(phone) {
+  if (!isValidPhone(phone)) {
+    showLockError("phone must be E.164 format (e.g. +919876543210)");
+    return false;
+  }
+  currentPhone = phone.trim();
+  showLockError("");
+  unlockResults();
+  return true;
+}
+
+// unlock button + enter key on phone input
+$("#unlockBtn")?.addEventListener("click", () => {
+  tryUnlock($("#phoneUnlock")?.value || "");
+});
+$("#phoneUnlock")?.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    tryUnlock($("#phoneUnlock")?.value || "");
+  }
+});
+// live-validate on input: clear error when user starts editing again
+$("#phoneUnlock")?.addEventListener("input", () => showLockError(""));
+
 form.addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const term = $("#searchTerm").value.trim();
@@ -245,17 +349,29 @@ form.addEventListener("submit", async (ev) => {
     setStatus("role is required", "error");
     return;
   }
-  const phoneResult = readPhone();
-  if (phoneResult && phoneResult.error) {
-    setStatus(phoneResult.error, "error");
-    return;
-  }
-  const phone = phoneResult ? phoneResult.value : null;
 
+  // capture this search as the latest
   const btn = form.querySelector("button");
   btn.disabled = true;
+
+  // 1. check cache → render preview (blurred) instantly if found
+  const cached = getCachedJobs(term, location);
+  let previewCount = 0;
+  if (cached && cached.length) {
+    renderJobs(cached);
+    previewCount = cached.length;
+  } else {
+    renderLockedPlaceholder(6);
+  }
+  // always lock — user must enter phone to see anything
+  lockResults();
+
+  // 2. in parallel: fire real backend scrape
   startProgress(term);
 
+  let realJobs = null;
+  let realSearchId = null;
+  let realError = null;
   try {
     const resp = await fetch("/api/scrape", {
       method: "POST",
@@ -263,33 +379,52 @@ form.addEventListener("submit", async (ev) => {
       body: JSON.stringify({
         search_term: term,
         location: location,
-        phone: phone,
+        phone: currentPhone,  // may be null until user unlocks — backend accepts null
         ...(lastGeo ? { geo: lastGeo } : {}),
       }),
     });
     if (!resp.ok) {
-      const txt = await resp.text();
-      stopProgress();
-      setStatus(`error ${resp.status}: ${txt}`, "error");
-      results.innerHTML = "";
-      return;
+      realError = `error ${resp.status}`;
+    } else {
+      const data = await resp.json();
+      if (!data.ok) {
+        realError = data.message || data.error || "unknown";
+      } else {
+        realJobs = data.jobs || [];
+        realSearchId = data.search_id || null;
+        // cache for next time
+        if (realJobs.length) writeCacheEntry(term, location, realJobs);
+      }
     }
-    const data = await resp.json();
-    if (!data.ok) {
-      stopProgress();
-      setStatus(`failed: ${data.message || data.error || "unknown"}`, "error");
-      results.innerHTML = "";
-      return;
-    }
-    stopProgress();
-    setStatus(`✓ ${data.count} jobs`, "");
-    currentSearchId = data.search_id || null;
-    renderJobs(data.jobs);
   } catch (e) {
-    stopProgress();
-    setStatus(`network error: ${e.message}`, "error");
+    realError = e.message;
   } finally {
+    stopProgress();
     btn.disabled = false;
+  }
+
+  currentSearchId = realSearchId;
+
+  // 3. only show real results if the user has unlocked. otherwise show
+  // status line and let them unlock to see the cache+real overlay.
+  if (currentPhone) {
+    // user already unlocked — auto-replace preview with real
+    if (realJobs !== null) {
+      renderJobs(realJobs);
+      results.classList.remove("locked");
+      setStatus(`✓ ${realJobs.length} jobs`, "");
+    } else if (realError) {
+      setStatus(realError, "error");
+    } else if (cached) {
+      setStatus(`✓ showing cached ${cached.length} jobs (real search failed)`, "warn");
+    }
+  } else {
+    // still locked — just update status line with progress
+    if (realJobs !== null) {
+      setStatus(`✓ ${realJobs.length} real jobs ready — unlock to view`, "");
+    } else if (realError) {
+      setStatus(realError, "warn");
+    }
   }
 });
 
@@ -314,9 +449,9 @@ form.addEventListener("submit", async (ev) => {
 
 function reportEvent(event, job) {
   if (!currentSearchId || !job) return;
-  // grab the latest phone value from the input — user may have edited it
-  const phoneRaw = ($("#phone")?.value || "").trim();
-  const phone = E164_RE.test(phoneRaw) ? phoneRaw : null;
+  // use the phone value from the unlock input (or currentPhone if already set)
+  const phoneRaw = ($("#phoneUnlock")?.value || currentPhone || "").trim();
+  const phone = isValidPhone(phoneRaw) ? phoneRaw : null;
   const body = JSON.stringify({
     search_id: currentSearchId,
     event: event,
@@ -326,7 +461,6 @@ function reportEvent(event, job) {
     job_url: job.url || null,
     phone: phone,
   });
-  // sendBeacon would be more reliable for unload events but fetch keepalive is fine here
   fetch("/api/admin/event", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
