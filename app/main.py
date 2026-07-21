@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from . import scraper
 from . import admin
+from . import bot
 
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -38,6 +39,18 @@ app = FastAPI(
 
 # register admin router (sqlite log + xlsx + telegram)
 app.include_router(admin.router)
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    """spawn the bot polling task as a background asyncio job."""
+    import asyncio
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        log.info("bot polling not started (TELEGRAM_BOT_TOKEN unset)")
+        return
+    asyncio.create_task(bot.start_polling(token))
+    log.info("bot polling task spawned")
 
 
 class ScrapeRequest(BaseModel):

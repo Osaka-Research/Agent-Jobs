@@ -86,11 +86,47 @@ def _init_db() -> None:
                     job_type TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_jobs_search_id ON jobs(search_id);
+
+                CREATE TABLE IF NOT EXISTS subscribers (
+                    chat_id INTEGER PRIMARY KEY,
+                    first_name TEXT,
+                    username TEXT,
+                    subscribed_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL
+                );
                 """
             )
             conn.commit()
         finally:
             conn.close()
+
+
+def add_subscriber(chat_id: int, first_name: str | None, username: str | None) -> None:
+    """upsert a subscriber row when they /start the bot."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_lock:
+        conn = _connect()
+        try:
+            conn.execute(
+                """INSERT INTO subscribers (chat_id, first_name, username, subscribed_at, last_seen_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(chat_id) DO UPDATE SET
+                       first_name = excluded.first_name,
+                       username = excluded.username,
+                       last_seen_at = excluded.last_seen_at""",
+                (chat_id, first_name, username, now, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def list_subscribers() -> list[int]:
+    conn = _connect()
+    try:
+        return [r["chat_id"] for r in conn.execute("SELECT chat_id FROM subscribers").fetchall()]
+    finally:
+        conn.close()
 
 
 _init_db()
