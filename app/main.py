@@ -20,8 +20,9 @@ from pydantic import BaseModel, Field
 
 from . import scraper
 
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "info"),
+    level=log_level,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 log = logging.getLogger("agent-jobs.main")
