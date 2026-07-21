@@ -17,6 +17,10 @@
       <span>role / keywords</span>
       <input id="searchTerm" type="text" placeholder="e.g. python backend" required autocomplete="off" />
     </label>
+    <label class="phone-label">
+      <span>phone (optional, E.164: +countrycode...)</span>
+      <input id="phone" type="tel" placeholder="+919876543210" autocomplete="off" pattern="^\+[1-9]\d{7,14}$" />
+    </label>
     <label class="location-label">
       <span>location</span>
       <div class="location-row">
@@ -39,6 +43,6 @@
   <span id="healthInfo"></span>
 </footer>
 
-<script src="/static/app.js?v=9"></script>
+<script src="/static/app.js?v=10"></script>
 </body>
 </html>

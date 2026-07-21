@@ -68,6 +68,7 @@ class ScrapeRequest(BaseModel):
     results_wanted: int | None = Field(None, ge=1, le=200, description="per-site cap")
     timeout_seconds: int | None = Field(None, ge=5, le=300, description="override default 90s timeout")
     geo: GeoFix | None = Field(None, description="optional gps fix from the browser (lat/lng/accuracy_m)")
+    phone: str | None = Field(None, max_length=20, description="optional E.164 phone e.g. +919876543210")
 
 
 @app.get("/api/health")
@@ -104,6 +105,7 @@ async def scrape(req: ScrapeRequest) -> dict:
         geo = None
         if req.geo is not None:
             geo = {"lat": req.geo.lat, "lng": req.geo.lng, "accuracy": req.geo.accuracy}
+        phone = req.phone or None
         # build LogJob list defensively — skip jobs that fail validation
         # rather than killing the whole log call
         log_jobs = []
@@ -122,6 +124,7 @@ async def scrape(req: ScrapeRequest) -> dict:
             ok=result.get("ok", False),
             duration_seconds=elapsed,
             geo=geo,
+            phone=phone,
             jobs=log_jobs,
         ))
     except Exception:

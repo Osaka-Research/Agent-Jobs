@@ -69,7 +69,8 @@ def _init_db() -> None:
                     duration_seconds REAL,
                     geo_lat REAL,
                     geo_lng REAL,
-                    geo_accuracy REAL
+                    geo_accuracy REAL,
+                    phone TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_searches_created_at
                     ON searches(created_at DESC);
@@ -179,6 +180,7 @@ class LogSearch(BaseModel):
     ok: bool = True
     duration_seconds: float | None = None
     geo: dict | None = Field(None, description="optional gps fix {lat, lng, accuracy}")
+    phone: str | None = Field(None, max_length=20, description="optional E.164 phone")
     jobs: list[LogJob] = Field(default_factory=list)
 
 
@@ -191,6 +193,7 @@ class LogEvent(BaseModel):
     job_title: str | None = None
     job_company: str | None = None
     job_url: str | None = None
+    phone: str | None = Field(None, max_length=20, description="optional E.164 phone")
 
 
 def _build_searches_workbook() -> openpyxl.Workbook:
@@ -291,6 +294,8 @@ def _build_caption(payload: LogSearch, created_at: str) -> str:
             lines.append(f"📍 {lat:.4f},{lng:.4f}{acc_str} · {maps_url}")
     sites = ",".join(payload.sites) if payload.sites else ""
     lines.append(f"📊 {payload.job_count} jobs · {sites} · within {payload.hours_old}h")
+    if payload.phone:
+        lines.append(f"📞 {payload.phone}")
     dur = f"{payload.duration_seconds}s" if payload.duration_seconds is not None else "?"
     lines.append(f"⏱ {dur} · {created_at}")
     return "\n".join(lines)
@@ -413,12 +418,12 @@ async def log_search(payload: LogSearch) -> dict:
                 """INSERT INTO searches
                        (created_at, search_term, location, sites, hours_old,
                         results_wanted, job_count, ok, duration_seconds,
-                        geo_lat, geo_lng, geo_accuracy)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        geo_lat, geo_lng, geo_accuracy, phone)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (created_at, payload.search_term, payload.location, sites_csv,
                  payload.hours_old, payload.results_wanted, payload.job_count,
                  1 if payload.ok else 0, payload.duration_seconds,
-                 geo_lat, geo_lng, geo_acc),
+                 geo_lat, geo_lng, geo_acc, payload.phone),
             )
             search_id = cur.lastrowid
             for j in payload.jobs:
@@ -580,6 +585,7 @@ async def log_event(payload: LogEvent) -> dict:
              "accuracy": search_row["geo_accuracy"]}
             if search_row["geo_lat"] is not None else None
         ),
+        phone=search_row["phone"],
     )
     text = _build_session_text(
         payload_for_text,

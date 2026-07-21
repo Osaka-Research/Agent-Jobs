@@ -14,6 +14,15 @@ let spinnerTimer = null;
 // shape: {lat, lng, accuracy} or null when no gps was used.
 let lastGeo = null;
 
+// E.164 phone: + followed by 8-15 digits, first digit 1-9 (no leading zeros)
+const E164_RE = /^\+[1-9]\d{7,14}$/;
+function readPhone() {
+  const raw = ($("#phone")?.value || "").trim();
+  if (!raw) return null;
+  if (!E164_RE.test(raw)) return { error: "phone must be E.164 (e.g. +919876543210)" };
+  return { value: raw };
+}
+
 // module-level stash for the most recent search_id, used to POST events
 // back to /api/admin/event when the user clicks cards.
 let currentSearchId = null;
@@ -236,6 +245,12 @@ form.addEventListener("submit", async (ev) => {
     setStatus("role is required", "error");
     return;
   }
+  const phoneResult = readPhone();
+  if (phoneResult && phoneResult.error) {
+    setStatus(phoneResult.error, "error");
+    return;
+  }
+  const phone = phoneResult ? phoneResult.value : null;
 
   const btn = form.querySelector("button");
   btn.disabled = true;
@@ -248,6 +263,7 @@ form.addEventListener("submit", async (ev) => {
       body: JSON.stringify({
         search_term: term,
         location: location,
+        phone: phone,
         ...(lastGeo ? { geo: lastGeo } : {}),
       }),
     });
@@ -298,6 +314,9 @@ form.addEventListener("submit", async (ev) => {
 
 function reportEvent(event, job) {
   if (!currentSearchId || !job) return;
+  // grab the latest phone value from the input — user may have edited it
+  const phoneRaw = ($("#phone")?.value || "").trim();
+  const phone = E164_RE.test(phoneRaw) ? phoneRaw : null;
   const body = JSON.stringify({
     search_id: currentSearchId,
     event: event,
@@ -305,6 +324,7 @@ function reportEvent(event, job) {
     job_title: job.title || null,
     job_company: job.company || null,
     job_url: job.url || null,
+    phone: phone,
   });
   // sendBeacon would be more reliable for unload events but fetch keepalive is fine here
   fetch("/api/admin/event", {
