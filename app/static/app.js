@@ -257,3 +257,22 @@ form.addEventListener("submit", async (ev) => {
     }
   } catch {}
 })();
+
+// populate the location datalist with the curated ~320-entry world list.
+// loaded once on page load, cached by the browser thereafter.
+(async () => {
+  try {
+    const r = await fetch("/static/locations.json");
+    if (!r.ok) return;
+    const list = await r.json();
+    const dl = document.getElementById("locations");
+    if (!dl) return;
+    const frag = document.createDocumentFragment();
+    for (const loc of list) {
+      const opt = document.createElement("option");
+      opt.value = loc;
+      frag.appendChild(opt);
+    }
+    dl.appendChild(frag);
+  } catch {}
+})();
