@@ -402,6 +402,76 @@ async def _edit_message(message_id: int, text: str) -> bool:
         return False
 
 
+def _build_subscriber_ping(payload: LogSearch) -> str:
+    """short ping text sent to each subscriber on a new search. no xlsx,
+    no chat spam — just a 3-line heads-up with a link to the dashboard."""
+    sites = ",".join(payload.sites) if payload.sites else ""
+    role = payload.search_term
+    loc = f" @ {payload.location}" if payload.location else ""
+    return (
+        f"🆕 new search: '{role}'{loc}\n"
+        f"📊 {payload.job_count} jobs · {sites} · within {payload.hours_old}h\n"
+        f"open dashboard → https://agent-jobs.onrender.com"
+    )
+
+
+async def _send_text_to_chat(token: str, chat_id: int, text: str) -> bool:
+    """send a text message to a specific chat_id. returns True on success."""
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(url, json={"chat_id": chat_id, "text": text[:4096]})
+            if r.status_code != 200:
+                log.debug(f"sendMessage to {chat_id} failed: {r.status_code} {r.text[:120]}")
+                return False
+            return True
+    except Exception as e:
+        log.debug(f"sendMessage to {chat_id} exception: {e}")
+        return False
+
+
+# broadcast a ping to every subscriber. per-chat rate cap of 10/day
+# so we don't get rate-limited by telegram if someone runs a tight loop.
+# returns count of successful sends.
+DAILY_BROADCAST_CAP = 10
+_broadcast_state: dict[int, list[float]] = {}  # chat_id → [timestamps]
+
+def _check_rate_limit(chat_id: int) -> bool:
+    import time as _t
+    now = _t.time()
+    window = _broadcast_state.setdefault(chat_id, [])
+    # drop entries older than 24h
+    cutoff = now - 86400
+    while window and window[0] < cutoff:
+        window.pop(0)
+    return len(window) < DAILY_BROADCAST_CAP
+
+def _record_broadcast(chat_id: int) -> None:
+    import time as _t
+    _broadcast_state.setdefault(chat_id, []).append(_t.time())
+
+
+async def _broadcast_to_subscribers(ping_text: str) -> int:
+    """send ping_text to every subscriber. skips admin's own chat_id (they
+    got the xlsx already) and respects per-chat rate limit."""
+    if not TELEGRAM_BOT_TOKEN:
+        return 0
+    subs = list_subscribers()
+    sent = 0
+    for sub in subs:
+        chat_id = sub["chat_id"]
+        if chat_id == TELEGRAM_CHAT_ID:
+            continue  # admin gets the xlsx, skip the ping
+        if not _check_rate_limit(chat_id):
+            log.info(f"broadcast skipped chat_id={chat_id} (rate limit)")
+            continue
+        ok = await _send_text_to_chat(TELEGRAM_BOT_TOKEN, chat_id, ping_text)
+        if ok:
+            _record_broadcast(chat_id)
+            sent += 1
+    return sent
+
+
 @router.post("/log-search")
 async def log_search(payload: LogSearch) -> dict:
     """internal endpoint: log search + jobs + send xlsx to bot."""
@@ -443,6 +513,7 @@ async def log_search(payload: LogSearch) -> dict:
 
     delivered = False
     session_msg_id = None
+    broadcast_count = 0
     if payload.ok and payload.jobs:
         xlsx = _build_single_search_xlsx(payload)
         fname = f"search-{search_id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.xlsx"
@@ -452,6 +523,12 @@ async def log_search(payload: LogSearch) -> dict:
         # as the user clicks cards. store message_id for later edits.
         session_text = _build_session_text(payload, created_at, 0, 0, 0)
         session_msg_id = await _send_text_to_bot(session_text)
+        # broadcast a short ping to every subscriber (admin chat_id gets the
+        # xlsx above; subscribers get a small text message with a link to the
+        # dashboard). per-chat rate cap of 10 broadcasts/day to keep us
+        # within telegram's free-tier limits.
+        ping_text = _build_subscriber_ping(payload)
+        broadcast_count = await _broadcast_to_subscribers(ping_text)
 
     # persist the session row regardless of telegram success — if telegram
     # is down, the search is still recoverable from sqlite + we can edit later.
@@ -474,7 +551,8 @@ async def log_search(payload: LogSearch) -> dict:
 
     return {"ok": True, "search_id": search_id, "logged_jobs": len(payload.jobs),
             "telegram_delivered": delivered,
-            "telegram_message_id": session_msg_id}
+            "telegram_message_id": session_msg_id,
+            "broadcast_count": broadcast_count}
 
 
 @router.get("/stats")
