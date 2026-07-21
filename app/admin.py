@@ -326,6 +326,26 @@ async def stats() -> dict:
             "jobs_count": n_jobs,
             "last_search": dict(last) if last else None,
             "telegram_enabled": bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID),
+            "subscribers_count": len(list_subscribers()),
+            "bot_token_set": bool(TELEGRAM_BOT_TOKEN),
+            "chat_id_set": bool(TELEGRAM_CHAT_ID),
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/subscribers")
+async def subscribers() -> dict:
+    """return list of registered subscribers (chats that /start'd the bot)."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT chat_id, first_name, username, subscribed_at, last_seen_at "
+            "FROM subscribers ORDER BY subscribed_at DESC"
+        ).fetchall()
+        return {
+            "count": len(rows),
+            "subscribers": [dict(r) for r in rows],
         }
     finally:
         conn.close()
