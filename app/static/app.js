@@ -184,6 +184,18 @@ function renderJobs(jobs) {
       expanded.appendChild(apply);
     }
 
+    // download-resume button — generates a .docx with the job info
+    // stub for now: title + company + location + description
+    const dl = document.createElement("button");
+    dl.type = "button";
+    dl.className = "download";
+    dl.textContent = "Download Resume";
+    dl.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      downloadJobDocx(j);
+    });
+    expanded.appendChild(dl);
+
     card.appendChild(expanded);
 
     // toggle handler — entire card is the click target except the apply button
@@ -276,3 +288,215 @@ form.addEventListener("submit", async (ev) => {
     dl.appendChild(frag);
   } catch {}
 })();
+
+// ===== .docx download =====
+//
+// Builds a minimal valid .docx (Office Open XML) entirely in the browser.
+// a .docx is a zip with [Content_Types].xml, _rels/.rels, and word/document.xml.
+// we use a tiny zip-builder (deflate + crc32) — no dependencies.
+//
+// stub for now: just title + company + location + description.
+// later this can be replaced with a real resume generator that pulls
+// profile data and tailors content to the job.
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) {
+    c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+// minimal store-only zip writer. no compression — every file stored as-is.
+// good enough for small docx files (< 100KB) where compression savings are negligible.
+function buildZip(files) {
+  // files: [{ name: string, data: Uint8Array }]
+  const enc = new TextEncoder();
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  for (const f of files) {
+    const nameBytes = enc.encode(f.name);
+    const crc = crc32(f.data);
+    const size = f.data.length;
+
+    // local file header (30 bytes + name)
+    const local = new Uint8Array(30 + nameBytes.length);
+    const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true);  // local file header signature
+    lv.setUint16(4, 20, true);          // version needed
+    lv.setUint16(6, 0, true);           // flags
+    lv.setUint16(8, 0, true);           // method = stored
+    lv.setUint16(10, 0, true);          // mod time
+    lv.setUint16(12, 0, true);          // mod date
+    lv.setUint32(14, crc, true);
+    lv.setUint32(18, size, true);
+    lv.setUint32(22, size, true);
+    lv.setUint16(26, nameBytes.length, true);
+    lv.setUint16(28, 0, true);
+    local.set(nameBytes, 30);
+    localParts.push(local, f.data);
+
+    // central directory header (46 bytes + name)
+    const central = new Uint8Array(46 + nameBytes.length);
+    const cv = new DataView(central.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true);
+    cv.setUint16(6, 20, true);
+    cv.setUint16(8, 0, true);
+    cv.setUint16(10, 0, true);
+    cv.setUint16(12, 0, true);
+    cv.setUint16(14, 0, true);
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, size, true);
+    cv.setUint32(24, size, true);
+    cv.setUint16(28, nameBytes.length, true);
+    cv.setUint16(30, 0, true);
+    cv.setUint16(32, 0, true);
+    cv.setUint16(34, 0, true);
+    cv.setUint16(36, 0, true);
+    cv.setUint32(38, 0, true);
+    cv.setUint32(42, offset, true);
+    central.set(nameBytes, 46);
+    centralParts.push(central);
+
+    offset += local.length + f.data.length;
+  }
+
+  const localBlobSize = localParts.reduce((s, p) => s + p.length, 0);
+  const centralBlobSize = centralParts.reduce((s, p) => s + p.length, 0);
+  const centralOffset = localBlobSize;
+
+  // end of central directory record
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(4, 0, true);
+  ev.setUint16(6, 0, true);
+  ev.setUint16(8, files.length, true);
+  ev.setUint16(10, files.length, true);
+  ev.setUint32(12, centralBlobSize, true);
+  ev.setUint32(16, centralOffset, true);
+  ev.setUint16(20, 0, true);
+
+  // concatenate everything
+  const total = localBlobSize + centralBlobSize + 22;
+  const out = new Uint8Array(total);
+  let pos = 0;
+  for (const p of localParts) { out.set(p, pos); pos += p.length; }
+  for (const p of centralParts) { out.set(p, pos); pos += p.length; }
+  out.set(eocd, pos);
+  return out;
+}
+
+function xmlEscape(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function sanitizeFilename(s) {
+  return String(s || "job")
+    .replace(/[^a-zA-Z0-9-_ ]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || "job";
+}
+
+function downloadJobDocx(job) {
+  const title = job.title || "(untitled)";
+  const company = job.company || "(unknown company)";
+  const location = job.location || "";
+  const site = job.site || "";
+  const description = job.description || "";
+  const salary = (job.salary_min || job.salary_max) ? formatSalary(job) : "";
+  const url = job.url || "";
+  const datePosted = job.date_posted || "";
+
+  const meta = [
+    `Company: ${company}`,
+    location ? `Location: ${location}` : "",
+    site ? `Source: ${site}` : "",
+    datePosted ? `Posted: ${datePosted}` : "",
+    salary ? `Salary: ${salary}` : "",
+    job.is_remote ? "Remote: yes" : "",
+    job.job_type ? `Type: ${job.job_type}` : "",
+  ].filter(Boolean);
+
+  const enc = new TextEncoder();
+  const para = (text, opts = {}) => {
+    const style = opts.bold ? `<w:b/><w:bCs/>` : "";
+    const size = opts.size ? `<w:sz w:val="${opts.size}"/><w:szCs w:val="${opts.size}"/>` : "";
+    const rPr = (style || size) ? `<w:rPr>${style}${size}</w:rPr>` : "";
+    const txt = text.split("\n").map((line, i, arr) => {
+      const br = i < arr.length - 1 ? `<w:br/>` : "";
+      return `<w:t xml:space="preserve">${xmlEscape(line)}${br ? "" : ""}</w:t>${br}`;
+    }).join("");
+    return `<w:p><w:r>${rPr}${txt}</w:r></w:p>`;
+  };
+
+  const metaParas = meta.map((m) => para(m)).join("");
+
+  const documentXml =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+      `<w:body>` +
+        para(title, { bold: true, size: "32" }) +
+        para(company, { bold: true, size: "24" }) +
+        (location ? para(location) : "") +
+        metaParas +
+        (url ? para(`Source: ${url}`) : "") +
+        para("") +
+        para("Job Description", { bold: true, size: "24" }) +
+        (description ? para(description) : para("(no description provided)")) +
+        para("") +
+        para("— Generated by Agent Jobs —", { size: "18" }) +
+        `<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>` +
+      `</w:body>` +
+    `</w:document>`;
+
+  const contentTypes =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+      `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+      `<Default Extension="xml" ContentType="application/xml"/>` +
+      `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
+    `</Types>`;
+
+  const rels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>` +
+    `</Relationships>`;
+
+  const files = [
+    { name: "[Content_Types].xml",   data: enc.encode(contentTypes) },
+    { name: "_rels/.rels",            data: enc.encode(rels) },
+    { name: "word/document.xml",      data: enc.encode(documentXml) },
+  ];
+  const zipBytes = buildZip(files);
+
+  const filename = `${sanitizeFilename(title)}-${sanitizeFilename(company)}.docx`;
+  const blob = new Blob([zipBytes], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+  const url2 = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url2;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url2), 1000);
+}

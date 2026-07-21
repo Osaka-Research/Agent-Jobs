@@ -252,6 +252,31 @@ button:disabled {
 }
 .job .apply:hover { background: var(--accent-dim); }
 
+.job .download {
+  display: inline-block;
+  margin-top: 14px;
+  margin-left: 8px;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  padding: 7px 14px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.job .download:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+.job .download:active {
+  transform: translateY(1px);
+}
+
 footer {
   padding: 14px 20px;
   color: var(--muted);
