@@ -92,10 +92,27 @@ button:disabled {
   font-size: 12px;
   min-height: 1em;
   border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
 }
 #status.loading { color: var(--accent); }
 #status.error { color: var(--err); }
 #status.warn { color: var(--warn); }
+
+/* pulsing dot animation fallback if spinner chars don't render */
+#status.loading::before {
+  content: "";
+  display: inline-block;
+  width: 6px; height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+  animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(0.7); }
+}
 
 #results {
   display: flex;
