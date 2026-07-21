@@ -17,6 +17,8 @@ Env:
 """
 from __future__ import annotations
 
+from typing import Any
+
 import io
 import logging
 import os
@@ -97,6 +99,23 @@ def _init_db() -> None:
                     subscribed_at TEXT NOT NULL,
                     last_seen_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS telegram_sessions (
+                    search_id INTEGER PRIMARY KEY,
+                    chat_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    opened_count INTEGER NOT NULL DEFAULT 0,
+                    resume_count INTEGER NOT NULL DEFAULT 0,
+                    apply_count INTEGER NOT NULL DEFAULT 0,
+                    first_opened_title TEXT,
+                    first_opened_company TEXT,
+                    first_applied_title TEXT,
+                    first_applied_company TEXT,
+                    first_resumed_title TEXT,
+                    first_resumed_company TEXT,
+                    last_event_at TEXT,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
             conn.commit()
@@ -161,6 +180,17 @@ class LogSearch(BaseModel):
     duration_seconds: float | None = None
     geo: dict | None = Field(None, description="optional gps fix {lat, lng, accuracy}")
     jobs: list[LogJob] = Field(default_factory=list)
+
+
+class LogEvent(BaseModel):
+    """user-action event from the dashboard. backend increments counters
+    and edits the corresponding telegram session message in place."""
+    search_id: int
+    event: str = Field(..., description="one of: open, resume, apply")
+    job_id: int | None = None
+    job_title: str | None = None
+    job_company: str | None = None
+    job_url: str | None = None
 
 
 def _build_searches_workbook() -> openpyxl.Workbook:
@@ -265,6 +295,37 @@ def _build_caption(payload: LogSearch, created_at: str) -> str:
     return "\n".join(lines)
 
 
+def _build_session_text(payload: LogSearch, created_at: str,
+                        opened: int = 0, resume: int = 0, apply: int = 0,
+                        first_opened: tuple[str, str] | None = None,
+                        first_applied: tuple[str, str] | None = None,
+                        first_resumed: tuple[str, str] | None = None) -> str:
+    """text-only body of the session message that we keep editing in place
+    as the user clicks cards. starts with the search summary and a
+    placeholder action-counter line that gets updated.
+
+    first_opened/applied/resumed are (title, company) tuples — the first
+    job the user took that action on. only set when that action has
+    happened at least once, so the line is meaningful.
+    """
+    lines = [_build_caption(payload, created_at)]
+    lines.append("─" * 24)
+    lines.append(
+        f"👆 {opened} opened  ·  📄 {resume} resumes  ·  🔗 {apply} applied"
+    )
+    # show the first job per action — high-signal info for a cloud caller
+    if first_opened:
+        title, company = first_opened
+        lines.append(f"first opened:   \"{title}\" @ {company}")
+    if first_applied:
+        title, company = first_applied
+        lines.append(f"first applied:  \"{title}\" @ {company}")
+    if first_resumed:
+        title, company = first_resumed
+        lines.append(f"first resumed:  \"{title}\" @ {company}")
+    return "\n".join(lines)
+
+
 def _style_header(ws) -> None:
     fill = openpyxl.styles.PatternFill(start_color="3ddc97", end_color="3ddc97", fill_type="solid")
     font = openpyxl.styles.Font(bold=True, color="0b0f0d")
@@ -290,6 +351,48 @@ async def _send_xlsx_to_bot(xlsx_bytes: bytes, filename: str, caption: str) -> b
             return True
     except Exception as e:
         log.exception(f"telegram sendDocument exception: {e}")
+        return False
+
+
+async def _send_text_to_bot(text: str) -> int | None:
+    """send a plain text message and return its message_id, or None on failure."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return None
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(url, json={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": text[:4096],
+            })
+            if r.status_code != 200:
+                log.warning(f"sendMessage failed: {r.status_code} {r.text[:200]}")
+                return None
+            data = r.json()
+            return data.get("result", {}).get("message_id")
+    except Exception as e:
+        log.exception(f"sendMessage exception: {e}")
+        return None
+
+
+async def _edit_message(message_id: int, text: str) -> bool:
+    """edit a previously-sent message in place. returns True on success."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID or not message_id:
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(url, json={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "message_id": message_id,
+                "text": text[:4096],
+            })
+            if r.status_code != 200:
+                log.debug(f"editMessageText failed: {r.status_code} {r.text[:120]}")
+                return False
+            return True
+    except Exception as e:
+        log.debug(f"editMessageText exception: {e}")
         return False
 
 
@@ -333,14 +436,39 @@ async def log_search(payload: LogSearch) -> dict:
             conn.close()
 
     delivered = False
+    session_msg_id = None
     if payload.ok and payload.jobs:
         xlsx = _build_single_search_xlsx(payload)
         fname = f"search-{search_id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.xlsx"
         caption = _build_caption(payload, created_at)
         delivered = await _send_xlsx_to_bot(xlsx, fname, caption)
+        # also send the session-tracker text message that we'll keep editing
+        # as the user clicks cards. store message_id for later edits.
+        session_text = _build_session_text(payload, created_at, 0, 0, 0)
+        session_msg_id = await _send_text_to_bot(session_text)
+
+    # persist the session row regardless of telegram success — if telegram
+    # is down, the search is still recoverable from sqlite + we can edit later.
+    if session_msg_id is not None:
+        try:
+            with _db_lock:
+                conn = _connect()
+                try:
+                    conn.execute(
+                        """INSERT INTO telegram_sessions
+                               (search_id, chat_id, message_id, created_at)
+                           VALUES (?, ?, ?, ?)""",
+                        (search_id, TELEGRAM_CHAT_ID, session_msg_id, created_at),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+        except Exception:
+            log.exception("failed to persist telegram_sessions row (non-fatal)")
 
     return {"ok": True, "search_id": search_id, "logged_jobs": len(payload.jobs),
-            "telegram_delivered": delivered}
+            "telegram_delivered": delivered,
+            "telegram_message_id": session_msg_id}
 
 
 @router.get("/stats")
@@ -364,6 +492,110 @@ async def stats() -> dict:
         }
     finally:
         conn.close()
+
+
+@router.post("/event")
+async def log_event(payload: LogEvent) -> dict:
+    """dashboard POSTs here when the user clicks open/resume/apply on a card.
+    we increment counters in telegram_sessions, set the first-X columns
+    on first occurrence, and edit the corresponding message in place.
+    the persistent message keeps the same message_id — only its text
+    updates. no per-event chat spam."""
+    if payload.event not in ("open", "resume", "apply"):
+        raise HTTPException(status_code=400, detail=f"unknown event '{payload.event}'")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with _db_lock:
+        conn = _connect()
+        try:
+            row = conn.execute(
+                "SELECT chat_id, message_id, opened_count, resume_count, apply_count, "
+                "first_opened_title, first_opened_company, "
+                "first_applied_title, first_applied_company, "
+                "first_resumed_title, first_resumed_company "
+                "FROM telegram_sessions WHERE search_id = ?",
+                (payload.search_id,),
+            ).fetchone()
+            if row is None:
+                return {"ok": True, "edited": False, "reason": "no session message"}
+
+            # determine which column to update for the first-action record
+            first_title_col = {"open": "first_opened_title", "apply": "first_applied_title", "resume": "first_resumed_title"}[payload.event]
+            first_company_col = {"open": "first_opened_company", "apply": "first_applied_company", "resume": "first_resumed_company"}[payload.event]
+            count_col = {"open": "opened_count", "apply": "apply_count", "resume": "resume_count"}[payload.event]
+
+            # bump counter always; set first-X columns only if currently null
+            set_clauses = [f"{count_col} = {count_col} + 1", "last_event_at = ?"]
+            params: list[Any] = [now_iso]
+
+            if payload.job_title and row[first_title_col] is None:
+                set_clauses.append(f"{first_title_col} = ?")
+                params.append(payload.job_title)
+                if payload.job_company is not None:
+                    set_clauses.append(f"{first_company_col} = ?")
+                    params.append(payload.job_company)
+
+            params.append(payload.search_id)
+            conn.execute(
+                f"UPDATE telegram_sessions SET {', '.join(set_clauses)} WHERE search_id = ?",
+                params,
+            )
+            conn.commit()
+            # re-read
+            row = conn.execute(
+                "SELECT chat_id, message_id, opened_count, resume_count, apply_count, "
+                "first_opened_title, first_opened_company, "
+                "first_applied_title, first_applied_company, "
+                "first_resumed_title, first_resumed_company "
+                "FROM telegram_sessions WHERE search_id = ?",
+                (payload.search_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+
+    # build the updated message text from the original search + new state
+    with _db_lock:
+        conn = _connect()
+        try:
+            search_row = conn.execute(
+                "SELECT * FROM searches WHERE id = ?", (payload.search_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+    if search_row is None:
+        return {"ok": True, "edited": False, "reason": "search not found"}
+
+    payload_for_text = LogSearch(
+        search_term=search_row["search_term"],
+        location=search_row["location"],
+        sites=search_row["sites"].split(",") if search_row["sites"] else [],
+        hours_old=search_row["hours_old"],
+        results_wanted=search_row["results_wanted"],
+        job_count=search_row["job_count"],
+        ok=bool(search_row["ok"]),
+        duration_seconds=search_row["duration_seconds"],
+        geo=(
+            {"lat": search_row["geo_lat"], "lng": search_row["geo_lng"],
+             "accuracy": search_row["geo_accuracy"]}
+            if search_row["geo_lat"] is not None else None
+        ),
+    )
+    text = _build_session_text(
+        payload_for_text,
+        search_row["created_at"],
+        opened=row["opened_count"],
+        resume=row["resume_count"],
+        apply=row["apply_count"],
+        first_opened=(row["first_opened_title"], row["first_opened_company"]) if row["first_opened_title"] else None,
+        first_applied=(row["first_applied_title"], row["first_applied_company"]) if row["first_applied_title"] else None,
+        first_resumed=(row["first_resumed_title"], row["first_resumed_company"]) if row["first_resumed_title"] else None,
+    )
+    edited = await _edit_message(row["message_id"], text)
+
+    return {"ok": True, "edited": edited,
+            "counters": {"opened": row["opened_count"],
+                         "resume": row["resume_count"],
+                         "apply": row["apply_count"]}}
 
 
 @router.get("/subscribers")
